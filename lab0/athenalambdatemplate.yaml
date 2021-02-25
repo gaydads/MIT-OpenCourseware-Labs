@@ -1,0 +1,166 @@
+Parameters:
+  DisableSpillEncryption:
+    Default: 'false'
+    Type: String
+    Description: If set to 'false' data spilled to S3 is encrypted with AES GCM
+  SecretNamePrefix:
+    Type: String
+    Description: >-
+      Used to create resource-based authorization policy for
+      "secretsmanager:GetSecretValue" action. E.g. All Athena JDBC Federation
+      secret names can be prefixed with "AthenaJdbcFederation" and authorization
+      policy will allow
+      "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:AthenaJdbcFederation*".
+      Parameter value in this case should be "AthenaJdbcFederation". If you do
+      not have a prefix, you can manually update the IAM policy to add allow any
+      secret names.
+  SubnetIds:
+    Type: 'List<AWS::EC2::Subnet::Id>'
+    Description: >-
+      One or more Subnet IDs corresponding to the Subnet that the Lambda
+      function can use to access you data source. (e.g. subnet1,subnet2)
+  SpillBucket:
+    Type: String
+    Description: The name of the bucket where this function can spill data.
+  LambdaTimeout:
+    Default: 900
+    Type: Number
+    Description: Maximum Lambda invocation runtime in seconds. (min 1 - 900 max)
+  LambdaMemory:
+    Default: 3008
+    Type: Number
+    Description: Lambda memory in MB (min 128 - 3008 max).
+  LambdaFunctionName:
+    AllowedPattern: '^[a-z0-9-_]{1,64}$'
+    Type: String
+    Description: >-
+      The name you will give to this catalog in Athena. It will also be used as
+      the function name. This name must satisfy the pattern ^[a-z0-9-_]{1,64}$
+  DefaultConnectionString:
+    Type: String
+    Description: >-
+      The default connection string is used when catalog is
+      "lambda:${LambdaFunctionName}". Catalog specific Connection Strings can be
+      added later. Format: ${DatabaseType}://${NativeJdbcConnectionString}.
+  SpillPrefix:
+    Default: athena-spill
+    Type: String
+    Description: The prefix within SpillBucket where this function can spill data.
+  SecurityGroupIds:
+    Type: 'List<AWS::EC2::SecurityGroup::Id>'
+    Description: >-
+      One or more SecurityGroup IDs corresponding to the SecurityGroup that
+      should be applied to the Lambda function. (e.g. sg1,sg2,sg3)
+Resources:
+  JdbcConnectorConfig:
+    Type: 'AWS::Lambda::Function'
+    Properties:
+      Code:
+        S3Bucket: awsserverlessrepo-changesets-1iiv3xa62ln3m
+        S3Key: >-
+          220400575859/arn:aws:serverlessrepo:us-east-1:292517598671:applications-AthenaJdbcConnector-versions-2021.6.1/6425bf96-d7a8-4e0a-9cfc-003d405b5279
+      Description: Enables Amazon Athena to communicate with Databases using JDBC
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds: !Ref SecurityGroupIds
+      Tags:
+        - Value: SAM
+          Key: 'lambda:createdBy'
+      MemorySize: !Ref LambdaMemory
+      Environment:
+        Variables:
+          default: !Ref DefaultConnectionString
+          spill_prefix: !Ref SpillPrefix
+          disable_spill_encryption: !Ref DisableSpillEncryption
+          spill_bucket: !Ref SpillBucket
+      Handler: com.amazonaws.connectors.athena.jdbc.MultiplexingJdbcCompositeHandler
+      Role: !GetAtt 
+        - JdbcConnectorConfigRole
+        - Arn
+      Timeout: !Ref LambdaTimeout
+      Runtime: java8
+      FunctionName: !Ref LambdaFunctionName
+  JdbcConnectorConfigRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Action:
+              - 'sts:AssumeRole'
+            Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+      ManagedPolicyArns:
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+        - 'arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole'
+      Policies:
+        - PolicyName: JdbcConnectorConfigRolePolicy0
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action:
+                  - 'secretsmanager:GetSecretValue'
+                Resource: !Sub >-
+                  arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretNamePrefix}*
+                Effect: Allow
+        - PolicyName: JdbcConnectorConfigRolePolicy1
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action:
+                  - 'logs:CreateLogGroup'
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+                Effect: Allow
+        - PolicyName: JdbcConnectorConfigRolePolicy2
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action:
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: !Sub >-
+                  arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${LambdaFunctionName}:*
+                Effect: Allow
+        - PolicyName: JdbcConnectorConfigRolePolicy3
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action:
+                  - 'athena:GetQueryExecution'
+                  - 's3:ListAllMyBuckets'
+                Resource: '*'
+                Effect: Allow
+        - PolicyName: JdbcConnectorConfigRolePolicy4
+          PolicyDocument:
+            Statement:
+              - Action:
+                  - 's3:GetObject'
+                  - 's3:ListBucket'
+                  - 's3:GetBucketLocation'
+                  - 's3:GetObjectVersion'
+                  - 's3:PutObject'
+                  - 's3:PutObjectAcl'
+                  - 's3:GetLifecycleConfiguration'
+                  - 's3:PutLifecycleConfiguration'
+                  - 's3:DeleteObject'
+                Resource:
+                  - !Sub 
+                    - 'arn:${AWS::Partition}:s3:::${bucketName}'
+                    - bucketName: !Ref SpillBucket
+                  - !Sub 
+                    - 'arn:${AWS::Partition}:s3:::${bucketName}/*'
+                    - bucketName: !Ref SpillBucket
+                Effect: Allow
+        - PolicyName: JdbcConnectorConfigRolePolicy5
+          PolicyDocument:
+            Statement:
+              - Action:
+                  - 'ec2:CreateNetworkInterface'
+                  - 'ec2:DeleteNetworkInterface'
+                  - 'ec2:DescribeNetworkInterfaces'
+                  - 'ec2:DetachNetworkInterface'
+                Resource: '*'
+                Effect: Allow
+      PermissionsBoundary: !Sub arn:aws:iam::${AWS::AccountId}:policy/LZ-IAM-Boundary
